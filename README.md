@@ -85,7 +85,7 @@ Loaded image: quay.io/metallb/speaker:v0.13.4
 
 ### 推送到远程仓库
 
-执行`offctl -l images-list.txt -r hub.local -b -a admin:123456`后将在当前目录`./images`下所有的tar镜像压缩包导入本地
+执行`offctl -l images-list.txt -r hub.local -b -a admin:123456`后将在当前目录`./images`下所有的tar镜像压缩包导入本地后，自动创建远程项目，并推送到远程仓库
 
 > `hub.local`为本地仓库
 >
@@ -125,5 +125,7 @@ v0.13.4: digest: sha256:554375b06426c715952671980b91cca115982b9a76f8c8d70f1c99b8
 > 如果只需要推送不需要创建镜像仓库可以去除`-b`，既`offctl -l images-list.txt -r hub.local -a admin:123456`
 >
 > 如果不需要鉴权可以去除`-a`，既`offctl -l images-list.txt -r hub.local`
+>
+> 自动创建的项目为`public`，如果需要改为`private`，请自行登陆**harbor**修改
 
 
