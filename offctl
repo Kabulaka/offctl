@@ -1,0 +1,202 @@
+#!/bin/bash
+
+#!/usr/bin/env bash
+
+CurrentDIR=$(cd "$(dirname "$0")" || exit;pwd)
+CurrentDIR=`pwd`
+ImagesDirDefault=${CurrentDIR}/images
+Container="docker"
+Ns="k8s.io"
+Password=""
+http=""
+save="false"
+registryurl=""
+auth=""
+createProject=""
+
+func() {
+    echo "使用方式:"
+    echo "  $0 [-l 镜像列表] [-d 镜像保存目录] [-r 私有仓库地址] [-s] [-b] [-a 鉴权密码]"
+    echo
+    echo "示例:"
+    echo "  保存镜像到指定目录           : $0 -l images-list.txt -d images -s"
+    echo "  推送镜像到指定私服           : $0 -l images-list.txt -d images -r hub.cctv.com"
+    echo "  推送镜像到指定私服并创建项目 : $0 -l images-list.txt -d images -r hub.cctv.com -b -a admin:10086"
+    echo
+    echo "描述:"
+    echo "  -d 镜像保存目录         : 镜像保存后的目录 (tar) . 默认: ${ImagesDirDefault}"
+    echo "  -l 镜像列表             : 镜像列表文件."
+    echo "  -r 私有仓库地址         : 目标私有镜像仓库地址 registry:port."
+    echo "  -c 容器                 : 容器,支持docker,containerd。不填写时自动识别docker,containerd,优先docker"
+    echo "  -n 命名空间             : 命名空间,containerd是需要填写. 默认：k8s.io"
+    echo "  -a 鉴权信息             : 鉴权信息. 格式: 账号:密码"
+    echo "  -b                      : 创建项目,私有仓库为Harbor的时候支持"
+    echo "  -i                      : 以http方式推送镜像"
+    echo "  -s                      : 以tar的格式保存镜像列表中的镜像至镜像保存目录"
+    echo "  -h                      : 使用帮助"
+    exit
+}
+
+
+if which docker | grep -w "docker" &>/dev/null; then
+    Container="docker"
+else
+    Container="ctr"
+fi
+
+while getopts 'd:l:r:c:n:a:bish' OPT; do
+    case $OPT in
+        d) ImagesDir="$OPTARG";;
+        l) ImagesList="$OPTARG";;
+        r) Registry="$OPTARG";;
+        c) Container="$OPTARG";;
+        n) Ns="$OPTARG";;
+        a) auth="$OPTARG";;
+        b) createProject="true";;
+        i) http="--plain-http=true";;
+        s) save="true";;
+        h) func;;
+        ?) func;;
+        *) func;;
+    esac
+done
+
+#echo $Container" "$Ns" "$Password" "$Harbor" "$HarborPassword
+
+if [ -z "${ImagesDir}" ]; then
+    ImagesDir=${ImagesDirDefault}
+fi
+
+if [ -n "${Registry}" ]; then
+   registryurl=${Registry}
+fi
+
+if file ${ImagesList} | grep -w "with CRLF line terminators" &>/dev/null; then
+   echo "文件格式: "`file ${ImagesList}`"不受支持"
+   exit 1
+fi
+
+if [[ ${save} == "true" ]] && [[ -n "${ImagesList}" ]]; then
+    if [ ! -d ${ImagesDir} ]; then
+       mkdir -p ${ImagesDir}
+    fi
+    ImagesListLen=$(cat ${ImagesList} | wc -l)
+    name=""
+    images=""
+    index=0
+    for image in $(<${ImagesList}); do
+        if [[ ${image} =~ ^\#\#.* ]]; then
+            echo $image
+        else
+            if [[ $image != *.*/* ]]; then
+                url="docker.io"
+                if [[ $image != */* ]]; then
+                    ProjectName="library"
+                    ImageName=$ProjectName"/"$image
+                else
+                    ImageName=$image
+                    ProjectName=${ImageName%%/*}
+                fi
+            else
+                url=${image%%/*}
+                ImageName=${image#*/}
+                ProjectName=${ImageName%%/*}
+            fi
+            echo "原始镜像: $image 完整镜像: $url/$ImageName"        
+            image=$url/$ImageName
+        fi
+
+        if [[ ${image} =~ ^\#\#.* ]]; then
+           if [[ -n ${images} ]]; then
+              echo ""
+              echo "保存镜像: "${name}" 到 "${ImagesDir}"/"${name}".tar  <<<"
+              if [[ ${Container} == "docker" ]]; then
+                  docker save -o ${ImagesDir}"/"${name}.tar ${images}
+              else
+                  ctr -n ${Ns} images export {ImagesDir}"/"${name}.tar ${images}
+              fi
+              echo ""
+           fi
+           images=""
+           name=$(echo "${image}" | sed 's/#//g' | sed -e 's/[[:space:]]//g')
+           ((index++))
+           continue
+        fi
+        if [[ ${Container} == "docker" ]]; then
+           docker pull "${image}"
+        else
+           if [[ ${auth} == "" ]]; then
+               ctr -n ${Ns} images pull -k $image
+           else
+               ctr -n ${Ns} images pull -k -u ${auth} $image
+           fi
+        fi
+        images=${images}" "${image}
+
+        if [[ ${index} -eq ${ImagesListLen}-1 ]]; then
+           if [[ -n ${images} ]]; then
+              if [[ ${Container} == "docker" ]]; then
+                  docker save -o ${ImagesDir}"/"${name}.tar ${images}
+              else
+                  ctr -n ${Ns} images export ${ImagesDir}"/"${name}.tar ${images}
+              fi
+           fi
+        fi
+        ((index++))
+    done
+elif [ -n "${ImagesList}" ]; then
+    # shellcheck disable=SC2045
+    for image in $(ls ${ImagesDir}/*.tar); do
+      echo "加载镜像: "${image}"  <<<"
+      if [[ ${Container} == "docker" ]]; then
+          docker load  < $image
+      else
+          ctr -n ${Ns} images import $image
+      fi
+    done
+
+    if [[ -n ${registryurl} ]]; then
+       for image in $(<${ImagesList}); do
+          if [[ ${image} =~ ^\#\#.* ]]; then
+             continue
+          fi
+          if [[ $image != *.*/* ]]; then
+              url="docker.io"
+              if [[ $image != */* ]]; then
+                  ProjectName="library"
+                  ImageName=$ProjectName"/"$image
+              else
+                  ImageName=$image
+                  ProjectName=${ImageName%%/*}
+              fi
+          else
+              url=${image%%/*}
+              ImageName=${image#*/}
+              ProjectName=${ImageName%%/*}
+          fi
+          echo "原始镜像: $image 仓库: $url 项目: $ProjectName 镜像: $ImageName"
+          
+          if [[ ${createProject} == "true" ]]; then
+              echo "创建项目: $ProjectName"
+              curl -u "${auth}" -X POST -H "Content-Type: application/json" "${registryurl}/api/v2.0/projects" -d "{\"project_name\": \"${ProjectName}\", \"public\": true}" -k
+          fi
+            
+          imageurl=$registryurl"/"$ImageName
+
+          ## push image
+          echo $imageurl
+          if [[ ${Container} == "docker" ]]; then
+              docker tag $image $imageurl
+              docker push $imageurl
+          else
+              ctr -n ${Ns} images tag $url"/"$ImageName $imageurl
+              if [[ ${auth} == "" ]]; then
+                  ctr -n ${Ns} images push ${http} -k ${imageurl}
+              else
+                  ctr -n ${Ns} images push ${http} -k -u ${auth} ${imageurl}
+              fi
+ 
+          fi
+       done
+    fi
+fi
