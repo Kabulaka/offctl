@@ -10,9 +10,11 @@ Ns="k8s.io"
 Password=""
 http=""
 save="false"
+harborProtocal="https://"
 registryurl=""
 auth=""
 createProject=""
+platform="linux/amd64"
 
 func() {
     echo "使用方式:"
@@ -30,7 +32,9 @@ func() {
     echo "  -c 容器                 : 容器,支持docker,containerd。不填写时自动识别docker,containerd,优先docker"
     echo "  -n 命名空间             : 命名空间,containerd是需要填写. 默认：k8s.io"
     echo "  -a 鉴权信息             : 鉴权信息. 格式: 账号:密码"
+    echo "  -z 目标平台的标识符     : 目标平台的标识符. ctr推送的时候可以指定，常用的有linux/amd64、linux/arm64、linux/arm/v7等. 默认：linux/amd64"
     echo "  -b                      : 创建项目,私有仓库为Harbor的时候支持"
+    echo "  -k                      : 创建项目,使用http访问，默认使用https"
     echo "  -i                      : 以http方式推送镜像"
     echo "  -s                      : 以tar的格式保存镜像列表中的镜像至镜像保存目录"
     echo "  -h                      : 使用帮助"
@@ -44,7 +48,7 @@ else
     Container="ctr"
 fi
 
-while getopts 'd:l:r:c:n:a:bish' OPT; do
+while getopts 'd:l:r:c:n:a:bkish' OPT; do
     case $OPT in
         d) ImagesDir="$OPTARG";;
         l) ImagesList="$OPTARG";;
@@ -52,7 +56,9 @@ while getopts 'd:l:r:c:n:a:bish' OPT; do
         c) Container="$OPTARG";;
         n) Ns="$OPTARG";;
         a) auth="$OPTARG";;
+        z) platform="$OPTARG";;
         b) createProject="true";;
+        k) harborProtocal="http://";;
         i) http="--plain-http=true";;
         s) save="true";;
         h) func;;
@@ -178,7 +184,7 @@ elif [ -n "${ImagesList}" ]; then
           
           if [[ ${createProject} == "true" ]]; then
               echo "创建项目: $ProjectName"
-              curl -u "${auth}" -X POST -H "Content-Type: application/json" "${registryurl}/api/v2.0/projects" -d "{\"project_name\": \"${ProjectName}\", \"public\": true}" -k
+              curl -u "${auth}" -X POST -H "Content-Type: application/json" "${harborProtocal}${registryurl}/api/v2.0/projects" -d "{\"project_name\": \"${ProjectName}\", \"public\": true}" -k
           fi
             
           imageurl=$registryurl"/"$ImageName
@@ -191,9 +197,9 @@ elif [ -n "${ImagesList}" ]; then
           else
               ctr -n ${Ns} images tag $url"/"$ImageName $imageurl
               if [[ ${auth} == "" ]]; then
-                  ctr -n ${Ns} images push ${http} -k ${imageurl}
+                  ctr -n ${Ns} images push --platform ${platform} ${http} -k ${imageurl}
               else
-                  ctr -n ${Ns} images push ${http} -k -u ${auth} ${imageurl}
+                  ctr -n ${Ns} images push --platform ${platform} ${http} -k -u ${auth} ${imageurl}
               fi
  
           fi
